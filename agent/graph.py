@@ -10,16 +10,35 @@ Key design decisions:
 
 from __future__ import annotations
 
-import operator
-from typing import Annotated, Any, Sequence, TypedDict
+from typing import Any, TypedDict
 
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain.memory import (
-    ConversationBufferMemory,
-    ConversationBufferWindowMemory,
-    ConversationSummaryMemory,
-)
-from langchain_core.messages import AIMessage, HumanMessage
+# AgentExecutor moved to langchain.agents.agent in newer versions
+try:
+    from langchain.agents import AgentExecutor
+except ImportError:
+    from langchain.agents.agent import AgentExecutor
+
+# create_openai_tools_agent moved to langchain.agents in some, langchain_core in others
+try:
+    from langchain.agents import create_openai_tools_agent
+except ImportError:
+    from langchain_core.agents import create_openai_tools_agent
+
+# Memory classes moved to langchain_community in LangChain >=0.3
+try:
+    from langchain.memory import (
+        ConversationBufferMemory,
+        ConversationBufferWindowMemory,
+        ConversationSummaryMemory,
+    )
+except ImportError:
+    from langchain_community.memory import (  # type: ignore
+        ConversationBufferMemory,
+        ConversationBufferWindowMemory,
+        ConversationSummaryMemory,
+    )
+
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
