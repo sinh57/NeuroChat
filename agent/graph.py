@@ -64,11 +64,15 @@ Guidelines:
 
 
 # ── LangGraph State ───────────────────────────────────────────────────────────
+# Use typing.List / typing.Dict (not built-in list/dict) so LangGraph
+# can infer types correctly on Python 3.8 – 3.11
+from typing import List, Dict
+
 class AgentState(TypedDict):
     input: str                              # latest user message
-    chat_history: list[dict]                # serialised history [{role, content}]
+    chat_history: List[Dict[str, str]]      # serialised history [{role, content}]
     output: str                             # agent reply
-    tools_used: list[str]                   # tool names called this turn
+    tools_used: List[str]                   # tool names called this turn
 
 
 # ── Agent node ────────────────────────────────────────────────────────────────
@@ -138,10 +142,10 @@ def build_agent(
     api_key: str,
     model: str = "gpt-4o-mini",
     temperature: float = 0.7,
-    selected_tools: list[str] | None = None,
+    selected_tools: List[str] = None,
     memory_type: str = "ConversationBuffer",
     window_k: int = 5,
-) -> tuple[Any, Any]:
+) -> tuple:
     """
     Build and compile a LangGraph agent.
 
