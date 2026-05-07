@@ -6,14 +6,20 @@ Stack : LangChain + LangGraph + Streamlit
 from typing import Dict, List
 
 import os
+from datetime import datetime
 
 import streamlit as st
 from dotenv import load_dotenv
 
 from agent.graph import build_agent
 from utils.helpers import memory_label, sanitise
+from utils.db import init_db, create_conversation, save_message, get_conversations, get_conversation_messages, delete_conversation, create_conversation_with_title, update_conversation_title
+from utils.rag import load_document, split_documents, add_documents_to_store, clear_knowledge_base
 
 load_dotenv()
+
+# Initialize database
+init_db()
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -75,12 +81,14 @@ div[data-testid="stMetric"] { background:var(--surface); border:1px solid var(--
 def _get_secret_key() -> str:
     """Read API key from st.secrets if available (Streamlit Cloud) or environment (HF Spaces)."""
     try:
+        if "GROQ_API_KEY" in st.secrets:
+            return st.secrets["GROQ_API_KEY"]
         if "OPENAI_API_KEY" in st.secrets:
             return st.secrets["OPENAI_API_KEY"]
     except Exception:
         pass
     
-    return os.environ.get("OPENAI_API_KEY", "")
+    return os.environ.get("GROQ_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
 
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -92,6 +100,8 @@ def _init_state() -> None:
         "memory":       None,
         "tool_log":     [],
         "cfg":          {},
+        "conversation_id": None,  # Current conversation ID for persistence
+        "save_conversation": False,  # Whether to save current conversation
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -108,17 +118,20 @@ with st.sidebar:
 
     st.markdown("### ⚙️ Configuration")
 
-    # API key — prefill from secrets if deployed
+    # API key — only show input if not already configured via secrets
     secret_key = _get_secret_key()
-    api_key = st.text_input(
-        "OpenAI API Key",
-        value=secret_key,
-        type="password",
-        placeholder="sk-…",
-        help="Your key is never stored. On Streamlit Cloud add it in App Secrets.",
-    )
+    if secret_key:
+        st.info("✅ API key configured (hidden)")
+        api_key = secret_key
+    else:
+        api_key = st.text_input(
+            "API Key (OpenAI or Groq)",
+            type="password",
+            placeholder="sk-… or gsk-…",
+            help="Your key is never stored. On Streamlit Cloud add it in App Secrets.",
+        )
 
-    model = st.selectbox("Model", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
+    model = st.selectbox("Model", ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "gemma2-9b-it", "gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
     temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.05)
 
     st.divider()
@@ -128,6 +141,7 @@ with st.sidebar:
     t_wiki   = st.checkbox("📚 Wikipedia",   value=True)
     t_time   = st.checkbox("🕐 DateTime",    value=True)
     t_wx     = st.checkbox("🌤️ Weather",     value=True)
+    t_kb     = st.checkbox("📖 Knowledge Base", value=False)
 
     st.divider()
     st.markdown("### 🧬 Memory")
@@ -138,17 +152,116 @@ with st.sidebar:
     window_k = st.slider("Window (k)", 2, 20, 5) if mem_type == "ConversationWindow" else 5
 
     st.divider()
-    if st.button("🗑️ Clear conversation", use_container_width=True):
-        st.session_state.messages     = []
-        st.session_state.chat_history = []
-        st.session_state.tool_log     = []
-        st.session_state.graph        = None
-        st.session_state.memory       = None
-        st.session_state.cfg          = {}
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("➕ New Conversation", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.chat_history = []
+            st.session_state.tool_log = []
+            st.session_state.graph = None
+            st.session_state.memory = None
+            st.session_state.cfg = {}
+            st.session_state.conversation_id = None
+            st.session_state.save_conversation = False
+            st.rerun()
+    with col2:
+        if st.button("🗑️ Clear Chat", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.chat_history = []
+            st.session_state.tool_log = []
+            st.rerun()
+
+    st.divider()
+    st.markdown("### 💾 Saved Conversations")
+    
+    # Toggle for saving current conversation
+    st.session_state.save_conversation = st.checkbox(
+        "Save this conversation",
+        value=st.session_state.save_conversation
+    )
+    
+    # Custom conversation name input
+    if st.session_state.save_conversation:
+        conv_name = st.text_input(
+            "Conversation name",
+            value=f"Conversation {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            key="conversation_name_input"
+        )
+        
+        # If saving and no conversation ID exists, create one with custom name
+        if st.session_state.conversation_id is None:
+            if st.session_state.messages:
+                st.session_state.conversation_id = create_conversation_with_title(conv_name)
+        else:
+            # Update title if it changed
+            if conv_name:
+                update_conversation_title(st.session_state.conversation_id, conv_name)
+    
+    # Show saved conversations
+    conversations = get_conversations()
+    if conversations:
+        for conv in conversations:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                if st.button(conv["title"], key=f"load_{conv['id']}", use_container_width=True):
+                    # Load conversation
+                    messages = get_conversation_messages(conv["id"])
+                    st.session_state.messages = messages
+                    st.session_state.chat_history = [
+                        {"role": msg["role"], "content": msg["content"]}
+                        for msg in messages
+                    ]
+                    st.session_state.conversation_id = conv["id"]
+                    st.session_state.save_conversation = True
+                    st.session_state.tool_log = []
+                    st.rerun()
+            with col2:
+                if st.button("🗑️", key=f"del_{conv['id']}"):
+                    delete_conversation(conv["id"])
+                    if st.session_state.conversation_id == conv["id"]:
+                        st.session_state.conversation_id = None
+                        st.session_state.save_conversation = False
+                    st.rerun()
+    else:
+        st.caption("No saved conversations yet")
+
+    st.divider()
+    st.markdown("### � Knowledge Base")
+    
+    # Document upload section
+    uploaded_file = st.file_uploader(
+        "Upload document (PDF, DOCX, TXT)",
+        type=["pdf", "docx", "txt"],
+        help="Upload documents to add to the knowledge base for RAG queries"
+    )
+    
+    if uploaded_file:
+        with st.spinner("Processing document..."):
+            try:
+                # Save uploaded file temporarily
+                temp_path = f"temp_{uploaded_file.name}"
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                # Load and process document
+                documents = load_document(temp_path)
+                chunks = split_documents(documents)
+                add_documents_to_store(chunks)
+                
+                # Clean up temp file
+                os.remove(temp_path)
+                
+                st.success(f"✅ Added {len(chunks)} chunks from {uploaded_file.name} to knowledge base")
+            except Exception as e:
+                st.error(f"❌ Error processing document: {e}")
+    
+    if st.button("🗑️ Clear Knowledge Base", use_container_width=True):
+        clear_knowledge_base()
+        st.success("✅ Knowledge base cleared")
         st.rerun()
 
     st.divider()
-    st.markdown("### 📊 Stats")
+    st.markdown("### � Stats")
     c1, c2 = st.columns(2)
     c1.metric("Messages",   len(st.session_state.messages))
     c2.metric("Tool calls", len(st.session_state.tool_log))
@@ -220,6 +333,7 @@ if send and user_input.strip():
     if t_wiki:   active_tools.append("wikipedia")
     if t_time:   active_tools.append("datetime")
     if t_wx:     active_tools.append("weather")
+    if t_kb:     active_tools.append("knowledge_base")
 
     # Rebuild agent only when config actually changes
     cfg = {
@@ -241,6 +355,10 @@ if send and user_input.strip():
         st.session_state.cfg    = cfg
 
     st.session_state.messages.append({"role": "user", "content": user_input})
+    
+    # Save user message to database if conversation saving is enabled
+    if st.session_state.save_conversation and st.session_state.conversation_id:
+        save_message(st.session_state.conversation_id, "user", user_input, [])
 
     with st.spinner("🧠 Thinking…"):
         try:
@@ -265,6 +383,11 @@ if send and user_input.strip():
         "content": output,
         "tools_used": tools_used,
     })
+    
+    # Save assistant message to database if conversation saving is enabled
+    if st.session_state.save_conversation and st.session_state.conversation_id:
+        save_message(st.session_state.conversation_id, "assistant", output, tools_used)
+    
     st.rerun()
 
 

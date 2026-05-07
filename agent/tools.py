@@ -123,6 +123,34 @@ def _make_search_tool() -> Optional[object]:
     return None
 
 
+# ── Knowledge Base (RAG) ─────────────────────────────────────────────────────────
+def _make_rag_tool() -> Optional[object]:
+    """Create a RAG tool for querying the knowledge base."""
+    try:
+        from utils.rag import search_knowledge_base
+        
+        @tool
+        def knowledge_base_search(query: str) -> str:
+            """
+            Search the uploaded knowledge base (documents) for relevant information.
+            Use this when the user asks about information from uploaded documents.
+            Input: a search query string.
+            """
+            try:
+                results = search_knowledge_base(query, k=3)
+                if not results:
+                    return "No relevant information found in the knowledge base."
+                
+                context = "\n\n".join([doc.page_content for doc in results])
+                return f"Found relevant information in knowledge base:\n\n{context}"
+            except Exception as ex:
+                return f"Error searching knowledge base: {ex}"
+        
+        return knowledge_base_search
+    except Exception:
+        return None
+
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 def get_tools(selected: List[str]) -> List:
     """
@@ -135,6 +163,7 @@ def get_tools(selected: List[str]) -> List:
         "weather":    lambda: weather_tool,
         "wikipedia":  _make_wikipedia_tool,
         "web_search": _make_search_tool,
+        "knowledge_base": _make_rag_tool,
     }
 
     result = []

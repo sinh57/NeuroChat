@@ -19,13 +19,22 @@ from typing import Any, Dict, List, Optional, TypedDict
 try:
     from langchain.agents import AgentExecutor
 except ImportError:
-    from langchain.agents.agent import AgentExecutor  # type: ignore
+    from langchain_core.agents import AgentExecutor  # type: ignore
 
 # create_openai_tools_agent
 try:
     from langchain.agents import create_openai_tools_agent
 except ImportError:
     from langchain_core.agents import create_openai_tools_agent  # type: ignore
+
+# create_react_agent (for Groq compatibility)
+try:
+    from langchain.agents import create_react_agent
+except ImportError:
+    try:
+        from langchain.agents.react.agent import create_react_agent
+    except ImportError:
+        create_react_agent = None  # type: ignore
 
 # Memory — moved to langchain_community in LangChain 0.3+
 try:
@@ -50,19 +59,49 @@ from agent.tools import get_tools
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are NeuroChat, an advanced conversational AI assistant.
+OPENAI_SYSTEM_PROMPT = """You are NeuroChat, an advanced conversational AI assistant.
 
-You have:
-- Persistent memory of this entire conversation
-- Access to tools: web search, calculator, Wikipedia, date/time, and weather
+You have access to tools that can help answer questions. When you need to use a tool:
+1. Think about what information you need
+2. Choose the appropriate tool
+3. Call the tool with the correct parameters
+4. Use the tool's result to answer the user
 
-Guidelines:
-- Think step-by-step before answering
-- When using a tool, briefly state why before calling it
-- Summarise tool results clearly — never dump raw output at the user
-- Be concise and accurate
-- Use markdown for code blocks, lists, and tables where helpful
-- If a tool fails, handle it gracefully and answer from your own knowledge
+Available tools:
+- web_search: Search the internet for current information
+- calculator: Perform mathematical calculations
+- wikipedia: Look up information from Wikipedia
+- datetime: Get current date and time
+- weather: Get weather information for a city
+- knowledge_base: Search uploaded documents for information
+
+IMPORTANT: When using a tool, you MUST call it using the exact format:
+TOOL_NAME(input="value")
+
+If you don't need a tool to answer, just respond directly.
+Always be helpful, accurate, and concise.
+"""
+
+REACT_SYSTEM_PROMPT = """You are NeuroChat, an advanced conversational AI assistant.
+
+You have access to the following tools:
+{tools}
+
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+Begin!
+
+Question: {input}
+Thought: {agent_scratchpad}
 """
 
 
@@ -153,11 +192,21 @@ def build_agent(
     Returns (compiled_graph, memory).
     Both are stored in st.session_state so they survive Streamlit reruns.
     """
-    llm = ChatOpenAI(
-        model=model,
-        temperature=temperature,
-        api_key=api_key,
-    )
+    # Detect if using Groq (API key starts with gsk) or OpenAI (starts with sk-)
+    # Groq provides an OpenAI-compatible API
+    if api_key.startswith("gsk"):
+        llm = ChatOpenAI(
+            model=model,
+            temperature=temperature,
+            api_key=api_key,
+            base_url="https://api.groq.com/openai/v1",
+        )
+    else:
+        llm = ChatOpenAI(
+            model=model,
+            temperature=temperature,
+            api_key=api_key,
+        )
 
     # Memory
     if memory_type == "ConversationSummary":
@@ -181,23 +230,51 @@ def build_agent(
     # Tools
     tool_objects = get_tools(selected_tools or [])
 
-    # Prompt — agent_scratchpad placeholder is required for OpenAI tools agent
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-    ])
+    # Use different agent type based on API provider
+    is_groq = api_key.startswith("gsk")
+    
+    if is_groq and create_react_agent is not None and tool_objects:
+        # Use ReAct agent for Groq models (better compatibility)
+        from langchain import hub
+        try:
+            prompt = hub.pull("hwchase17/react")
+        except:
+            # Fallback to custom prompt if hub pull fails
+            from langchain_core.prompts import PromptTemplate
+            prompt = PromptTemplate(
+                template=REACT_SYSTEM_PROMPT,
+                input_variables=["input", "agent_scratchpad", "tools", "tool_names"]
+            )
+        
+        agent = create_react_agent(llm, tool_objects, prompt)
+        executor = AgentExecutor(
+            agent=agent,
+            tools=tool_objects,
+            verbose=False,
+            handle_parsing_errors=True,
+            max_iterations=6,
+            return_intermediate_steps=True,
+            handle_tool_errors=True,
+        )
+    else:
+        # Use OpenAI tools agent for OpenAI models
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", OPENAI_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
 
-    agent = create_openai_tools_agent(llm, tool_objects, prompt)
-    executor = AgentExecutor(
-        agent=agent,
-        tools=tool_objects,
-        verbose=False,
-        handle_parsing_errors=True,
-        max_iterations=6,
-        return_intermediate_steps=True,
-    )
+        agent = create_openai_tools_agent(llm, tool_objects, prompt)
+        executor = AgentExecutor(
+            agent=agent,
+            tools=tool_objects,
+            verbose=False,
+            handle_parsing_errors=True,
+            max_iterations=6,
+            return_intermediate_steps=True,
+            handle_tool_errors=True,
+        )
 
     # Build LangGraph
     workflow = StateGraph(AgentState)
