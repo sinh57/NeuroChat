@@ -100,8 +100,8 @@ LangGraph recompiles the graph on `invoke()` — if memory were created inside, 
 
 ```bash
 # 1. Clone
-git clone https://github.com/yourusername/neurochat
-cd neurochat
+git clone https://github.com/sinh57/NeuroChat.git
+cd NeuroChat
 
 # 2. Create virtual environment
 python -m venv venv
@@ -124,32 +124,155 @@ streamlit run app.py
 
 ---
 
-## ☁️ Deploy to Streamlit Cloud (free)
+## ☁️ Deploy to Streamlit Cloud (Recommended)
 
-1. Push this repo to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**
-3. Select repo → `app.py` as entry point
-4. Under **Advanced settings → Secrets**, add your API key:
-   ```toml
-   OPENAI_API_KEY = "sk-your-key"
-   # OR
-   GROQ_API_KEY = "gsk-your-key"
-   ```
-5. Click **Deploy** — live in ~2 minutes ✅
+### Step-by-Step Deployment:
+
+1. **Push to GitHub** (already done at https://github.com/sinh57/NeuroChat.git)
+
+2. **Create Streamlit Cloud App:**
+   - Go to [share.streamlit.io](https://share.streamlit.io)
+   - Click **New app**
+   - Select repository: `sinh57/NeuroChat`
+   - Select branch: `main`
+   - Select main file: `app.py`
+   - Click **Deploy**
+
+3. **Configure API Key:**
+   - After deployment, go to your app settings
+   - Navigate to **Advanced** → **Secrets**
+   - Add your API key:
+     ```toml
+     OPENAI_API_KEY = "sk-your-openai-key"
+     # OR
+     GROQ_API_KEY = "gsk-your-groq-key"
+     ```
+   - Click **Save**
+
+4. **Verify Deployment:**
+   - Wait 2-3 minutes for the app to start
+   - Check the deployment logs for errors
+   - Test the app by sending a message
+
+**Streamlit Cloud Features:**
+- ✅ Free tier available
+- ✅ Automatic HTTPS
+- ✅ Built-in authentication (optional)
+- ✅ Environment variables via Secrets
+- ✅ Easy redeployment on git push
 
 ---
 
-## 🤗 Deploy to HuggingFace Spaces (free)
+## 🤗 Deploy to HuggingFace Spaces
 
-The `---` header at the top of this README is the HF Spaces config.
+### Step-by-Step Deployment:
 
-```bash
-# Create a new Space at huggingface.co/new-space
-# SDK: Streamlit
-git remote add hf https://huggingface.co/spaces/yourusername/neurochat
-git push hf main
+1. **Create New Space:**
+   - Go to [huggingface.co/new-space](https://huggingface.co/new-space)
+   - Space name: `neurochat` (or your choice)
+   - License: MIT
+   - SDK: Streamlit
+   - Hardware: CPU Basic (free)
+   - Click **Create Space**
+
+2. **Clone and Push:**
+   ```bash
+   # Clone your new space
+   git clone https://huggingface.co/spaces/yourusername/neurochat
+   cd neurochat
+
+   # Copy your project files
+   # (or push from your local directory)
+   git remote set-url origin https://huggingface.co/spaces/yourusername/neurochat
+   git add .
+   git commit -m "Deploy NeuroChat to HuggingFace Spaces"
+   git push origin main
+   ```
+
+3. **Configure API Key:**
+   - Go to your Space → **Settings** → **Repository secrets**
+   - Add new secret:
+     - Name: `OPENAI_API_KEY` or `GROQ_API_KEY`
+     - Value: Your actual API key
+   - Click **Add new secret**
+
+4. **Verify Deployment:**
+   - The Space will automatically rebuild
+   - Check the "Logs" tab for errors
+   - Test the app once it's running
+
+**HuggingFace Spaces Features:**
+- ✅ Free CPU tier
+- ✅ GPU options (paid)
+- ✅ Community visibility
+- ✅ Repository secrets
+- ✅ Automatic rebuilds
+
+---
+
+## 🔧 Environment Configuration
+
+### Required Environment Variables:
+
+| Variable | Description | Required |
+|---|---|---|
+| `OPENAI_API_KEY` | OpenAI API key for GPT models | Yes (if using OpenAI) |
+| `GROQ_API_KEY` | Groq API key for Llama models | Yes (if using Groq) |
+
+### Local Development (.env file):
+```env
+# .env file (never commit this)
+OPENAI_API_KEY=sk-your-openai-key
+# OR
+GROQ_API_KEY=gsk-your-groq-key
 ```
-Add `OPENAI_API_KEY` or `GROQ_API_KEY` in Space → Settings → Repository secrets.
+
+### Deployment Secrets:
+
+**Streamlit Cloud:**
+- Settings → Advanced → Secrets
+- Add as TOML format: `OPENAI_API_KEY = "your-key"`
+
+**HuggingFace Spaces:**
+- Settings → Repository secrets
+- Add as key-value pairs
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues:
+
+**Issue:** "ModuleNotFoundError: No module named 'langchain.agents'"
+- **Solution:** Dependencies are pinned to LangChain 0.2.x for compatibility. Reinstall with `pip install -r requirements.txt`
+
+**Issue:** "Failed to call a function" with Groq models
+- **Solution:** Groq models use ReAct agent pattern. If issues persist, switch to OpenAI models (gpt-4o-mini)
+
+**Issue:** App fails to start on deployment
+- **Solution:** Check deployment logs. Ensure all dependencies are in requirements.txt
+
+**Issue:** API key not working
+- **Solution:** Verify API key format:
+  - OpenAI: starts with `sk-`
+  - Groq: starts with `gsk-` or `gsk_`
+
+**Issue:** SQLite database errors on deployment
+- **Solution:** The database is created automatically. Ensure the app has write permissions
+
+**Issue:** Knowledge base not working
+- **Solution:** Ensure FAISS and sentence-transformers are installed. Check if documents are uploaded correctly
+
+### Deployment Checklist:
+
+- [ ] API key configured in secrets
+- [ ] requirements.txt includes all dependencies
+- [ ] .env is in .gitignore
+- [ ] conversations.db is in .gitignore
+- [ ] knowledge_base/ is in .gitignore
+- [ ] README.md has correct repository URL
+- [ ] App runs locally without errors
+- [ ] Test with both OpenAI and Groq models
 
 ---
 
